@@ -219,6 +219,7 @@ var burstSize uint
 var sizeMultiplier uint
 var schedTime uint
 var maxPacketsToClone uint32
+var hwtxchecksum bool
 
 type port struct {
 	rxQueues       []bool
@@ -250,6 +251,13 @@ type Config struct {
 	// If true, Stop routine gets a dedicated CPU core instead of
 	// running together with scheduler. Default value is false.
 	StopOnDedicatedCore bool
+	// Calculate IPv4, UDP and TCP checksums in hardware. This flag
+	// slows down general TX processing, so it should be enabled if
+	// applications intends to modify packets often, and therefore
+	// needs to recalculate their checksums. If application doesn't
+	// modify many packets, it may chose to calculate checksums in SW
+	// and leave this flag off. Default value is false.
+	HWTXChecksum        bool
 	// Specifies number of mbufs in mempool per port. Default value is
 	// 8191.
 	MbufNumber          uint
@@ -289,6 +297,7 @@ func SystemInit(args *Config) {
 	schedulerOff := args.DisableScheduler
 	schedulerOffRemove := args.PersistentClones
 	stopDedicatedCore := args.StopOnDedicatedCore
+	hwtxchecksum = args.HWTXChecksum
 
 	mbufNumber := uint(8191)
 	if args.MbufNumber != 0 {
@@ -345,6 +354,8 @@ func SystemInit(args *Config) {
 	StopRing := low.CreateQueue(generateRingName(), burstSize*sizeMultiplier)
 	schedState = scheduler.NewScheduler(CPUCoresNumber, schedulerOff, schedulerOffRemove, stopDedicatedCore, StopRing, checkTime)
 	common.LogTitle(common.Initialization, "------------***------ Filling FlowFunctions ------***------------")
+	// Init packet processing
+	packet.SetHWTXChecksumFlag(hwtxchecksum)
 }
 
 // Starting system - begin packet receiving and packet sending.
@@ -356,7 +367,7 @@ func SystemStart() {
 	common.LogTitle(common.Initialization, "------------***---------- Creating ports ---------***------------")
 	for i := range createdPorts {
 		if createdPorts[i].config != inactivePort {
-			low.CreatePort(createdPorts[i].port, createdPorts[i].rxQueuesNumber, createdPorts[i].txQueuesNumber)
+			low.CreatePort(createdPorts[i].port, createdPorts[i].rxQueuesNumber, createdPorts[i].txQueuesNumber, hwtxchecksum)
 		}
 	}
 	// Timeout is needed for ports to start up. This way is used in pktgen.

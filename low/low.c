@@ -11,6 +11,7 @@
 #include <rte_mbuf.h>
 #include <rte_ring.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 // These constants are get from DPDK and checked for performance
 #define RX_RING_SIZE 128
@@ -66,7 +67,8 @@ void setAffinity(uint8_t coreId) {
 
 // Initializes a given port using global settings and with the RX buffers
 // coming from the mbuf_pool passed as a parameter.
-int port_init(uint8_t port, uint16_t receiveQueuesNumber, uint16_t sendQueuesNumber, struct rte_mempool *mbuf_pool, struct ether_addr* addr)
+int port_init(uint8_t port, uint16_t receiveQueuesNumber, uint16_t sendQueuesNumber, struct rte_mempool *mbuf_pool,
+    struct ether_addr* addr, bool hwtxchecksum)
 {
 	//struct rte_eth_conf port_conf = port_conf_default;
 	const uint16_t rx_rings = receiveQueuesNumber, tx_rings = sendQueuesNumber;
@@ -98,10 +100,17 @@ int port_init(uint8_t port, uint16_t receiveQueuesNumber, uint16_t sendQueuesNum
 			return retval;
 	}
 
+    struct rte_eth_dev_info dev_info;
+    rte_eth_dev_info_get(port, &dev_info);
+    if (hwtxchecksum) {
+        /* Default TX settings are to disable offload operations, need to fix it */
+        dev_info.default_txconf.txq_flags = 0;
+    }
+
 	/* Allocate and set up 1 TX queue per Ethernet port. */
 	for (q = 0; q < tx_rings; q++) {
 		retval = rte_eth_tx_queue_setup(port, q, TX_RING_SIZE,
-				rte_eth_dev_socket_id(port), NULL);
+				rte_eth_dev_socket_id(port), &dev_info.default_txconf);
 		if (retval < 0)
 			return retval;
 	}
@@ -130,6 +139,10 @@ void recv(uint8_t port, uint16_t queue, struct rte_ring *out_ring, uint8_t coreI
 	for (;;) {
 		// Get RX packets from port
 		const uint16_t rx_pkts_number = rte_eth_rx_burst(port, queue, bufs, BURST_SIZE);
+
+        for (i = 0; i < rx_pkts_number; i++) {
+            printf("Recv packet flags = 0x%llx, packet type = 0x%x, tx_offload = 0x%016llx\n", bufs[i]->ol_flags, bufs[i]->packet_type, bufs[i]->tx_offload);
+        }
 
 		if (unlikely(rx_pkts_number == 0))
 			continue;
@@ -165,6 +178,10 @@ void send(uint8_t port, uint16_t queue, struct rte_ring *in_ring, uint8_t coreId
 	for (;;) {
 		// Get packets for TX from ring
 		uint16_t pkts_for_tx_number = rte_ring_mc_dequeue_burst(in_ring, (void*)bufs, BURST_SIZE);
+
+        for (buf = 0; buf < pkts_for_tx_number; buf++) {
+            printf("Send packet flags = 0x%llx, packet type = 0x%x, tx_offload = 0x%016llx\n", bufs[buf]->ol_flags, bufs[buf]->packet_type, bufs[buf]->tx_offload);
+        }
 
 		if (unlikely(pkts_for_tx_number == 0))
 			continue;

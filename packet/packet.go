@@ -48,6 +48,7 @@ import (
 )
 
 var mbufStructSize uintptr
+var hwtxchecksum bool
 
 func init() {
 	var t1 low.Mbuf
@@ -562,6 +563,12 @@ func ExtractPacket(IN uintptr) *Packet {
 	return ToPacket(ExtractPacketAddr(IN))
 }
 
+
+// Another function which should not be exported but it is used in flow.
+func SetHWTXChecksumFlag(flag bool) {
+	hwtxchecksum = flag
+}
+
 // Create vector of packets by calling ExtractPacket function
 // TODO This should be unexported method. However now it is exported to be used in package flow.
 func ExtractPackets(packet []*Packet, IN []uintptr, n uint) {
@@ -607,6 +614,11 @@ func InitEmptyEtherIPv4Packet(packet *Packet, plSize uint) {
 	// Next fields not required by pktgen to accept packet. But set anyway
 	packet.IPv4.VersionIhl = 0x45 // Ipv4, IHL = 5 (min header len)
 	packet.IPv4.TotalLength = SwapBytesUint16(uint16(IPv4MinLen + plSize))
+
+	if hwtxchecksum {
+		packet.IPv4.HdrChecksum = 0
+		low.SetTXIPv4OLFlags(packet.CMbuf, EtherLen, IPv4MinLen)
+	}
 }
 
 // InitEmptyEtherIPv6Packet initializes input packet with preallocated plSize of bytes for payload
@@ -642,6 +654,11 @@ func InitEmptyEtherIPv4TCPPacket(packet *Packet, plSize uint) {
 	packet.IPv4.VersionIhl = 0x45 // Ipv4, IHL = 5 (min header len)
 	packet.IPv4.TotalLength = SwapBytesUint16(uint16(IPv4MinLen + TCPMinLen + plSize))
 	packet.TCP.DataOff = packet.TCP.DataOff | 0x50
+
+	if hwtxchecksum {
+		packet.IPv4.HdrChecksum = 0
+		low.SetTXIPv4TCPOLFlags(packet.CMbuf, EtherLen, IPv4MinLen)
+	}
 }
 
 // InitEmptyEtherIPv4UDPPacket initializes input packet with preallocated plSize of bytes for payload
@@ -662,6 +679,11 @@ func InitEmptyEtherIPv4UDPPacket(packet *Packet, plSize uint) {
 	packet.IPv4.VersionIhl = 0x45 // Ipv4, IHL = 5 (min header len)
 	packet.IPv4.TotalLength = SwapBytesUint16(uint16(IPv4MinLen + UDPLen + plSize))
 	packet.UDP.DgramLen = SwapBytesUint16(uint16(UDPLen + plSize))
+
+	if hwtxchecksum {
+		packet.IPv4.HdrChecksum = 0
+		low.SetTXIPv4UDPOLFlags(packet.CMbuf, EtherLen, IPv4MinLen)
+	}
 }
 
 // InitEmptyEtherIPv6TCPPacket initializes input packet with preallocated plSize of bytes for payload
@@ -682,6 +704,10 @@ func InitEmptyEtherIPv6TCPPacket(packet *Packet, plSize uint) {
 	packet.IPv6.PayloadLen = SwapBytesUint16(uint16(TCPMinLen + plSize))
 	packet.IPv6.VtcFlow = SwapBytesUint32(0x60 << 24) // IP version
 	packet.TCP.DataOff = packet.TCP.DataOff | 0x50
+
+	if hwtxchecksum {
+		low.SetTXIPv6TCPOLFlags(packet.CMbuf, EtherLen, IPv6Len)
+	}
 }
 
 // InitEmptyEtherIPv6UDPPacket initializes input packet with preallocated plSize of bytes for payload
@@ -701,6 +727,27 @@ func InitEmptyEtherIPv6UDPPacket(packet *Packet, plSize uint) {
 	packet.IPv6.PayloadLen = SwapBytesUint16(uint16(UDPLen + plSize))
 	packet.IPv6.VtcFlow = SwapBytesUint32(0x60 << 24) // IP version
 	packet.UDP.DgramLen = SwapBytesUint16(uint16(UDPLen + plSize))
+
+	if hwtxchecksum {
+		low.SetTXIPv6UDPOLFlags(packet.CMbuf, EtherLen, IPv6Len)
+	}
+}
+
+func SetHWCksumOLFlags(packet *Packet) {
+	if packet.Ether.EtherType == SwapBytesUint16(IPV4Number) {
+		packet.IPv4.HdrChecksum = 0
+		if packet.IPv4.NextProtoID == UDPNumber {
+			low.SetTXIPv4UDPOLFlags(packet.CMbuf, EtherLen, IPv4MinLen)
+		} else if packet.IPv4.NextProtoID == TCPNumber {
+			low.SetTXIPv4TCPOLFlags(packet.CMbuf, EtherLen, IPv4MinLen)
+		}
+	} else if packet.Ether.EtherType == SwapBytesUint16(IPV6Number) {
+		if packet.IPv6.Proto == UDPNumber {
+			low.SetTXIPv6UDPOLFlags(packet.CMbuf, EtherLen, IPv6Len)
+		} else if packet.IPv6.Proto == TCPNumber {
+			low.SetTXIPv6TCPOLFlags(packet.CMbuf, EtherLen, IPv6Len)
+		}
+	}
 }
 
 // Swapping uint16 in Little Endian and Big Endian
